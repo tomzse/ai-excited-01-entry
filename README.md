@@ -4,7 +4,9 @@
 [![rank](https://make.fun/badge/ai-excited-01/tomzse/ai-excited-01-entry/rank.svg)](https://make.fun/bounty/ai-excited-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=ai-excited-01)
 [![reward](https://make.fun/badge/ai-excited-01/tomzse/ai-excited-01-entry/reward.svg)](https://make.fun/bounty/ai-excited-01?utm_source=github&utm_medium=readme&utm_campaign=ai-excited-01)
 
-The Toy Box Rex — a colossal LEGO T-Rex bursting out of a toy box.
+A colossal LEGO T-Rex bursting out of a toy box.
+
+An entry for [make.fun's "Make the AI judge excited" bounty (ai-excited-01)](https://make.fun/bounty/ai-excited-01).
 
 ## Run it
 
