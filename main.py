@@ -1,396 +1,465 @@
 #!/usr/bin/env python3
-"""
-'The Desert Dreamed of the Sea'
-Entry for make.fun ai-excited-01 bounty.
-Pure Python standard library implementation (struct, zlib).
-"""
-
 import os
-import sys
-import struct
-import zlib
 import math
+import zlib
+import struct
 
 WIDTH = 1024
-HEIGHT = 1024
+HIGHT = 1024
 
-def create_png(width, height, rgba_data):
-    """Encodes raw RGBA pixel data into a valid PNG byte string using standard library."""
-    def chunk(chunk_type, data):
-        c = chunk_type + data
-        return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+def clamp(v, low=0, high=255):
+    return max(low, min(high, int(v)))
 
-    # Build filtered scanlines (filter type 0 = None)
-    row_size = width * 4
-    raw_scanlines = bytearray()
-    for y in range(height):
-        raw_scanlines.append(0)  # filter type 0
-        start = y * row_size
-        raw_scanlines.extend(rgba_data[start:start + row_size])
+def blend(c1, c2, t):
+    t = max(0.0, min(1.0, t))
+    return (
+        int(c1[0] + (c2[0] - c1[0]) * t),
+        int(c1[1] + (c2[1] - c1[1]) * t),
+        int(c1[2] + (c2[2] - c1[2]) * t)
+    )
 
-    compressed = zlib.compress(raw_scanlines, level=9)
+def draw_canvas():
+    buf = bytearray(WIDTH * HIGHT * 3)
 
-    # PNG Header
-    signature = b'\x89PNG\r\n\x1a\n'
-    ihdr_data = struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)
-    ihdr_chunk = chunk(b'IHDR', ihdr_data)
-    idat_chunk = chunk(b'IDAT', compressed)
-    iend_chunk = chunk(b'IEND', b'')
+    # 1. Sky Gradient & Stars & Clouds
+    # Sky colors: Top (indigo: 15, 12, 45), Mid-upper (magenta: 85, 25, 75), Mid-lower (orange: 175, 70, 45), Horizon (gold/amber: 225, 150, 60)
+    sky_top = (15, 12, 45)
+    sky_mid1 = (85, 25, 75)
+    sky_mid2 = (175, 70, 45)
+    sky_horizon = (225, 150, 60)
 
-    return signature + ihdr_chunk + idat_chunk + iend_chunk
+    # Horizon y around 620
+    horizon_y = 620
 
-# 5x7 Bitmap Font for characters (A-Z, space, period)
-FONT_5X7 = {
-    'A': [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-    'B': [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
-    'C': [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
-    'D': [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E],
-    'E': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
-    'F': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
-    'G': [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E],
-    'H': [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-    'I': [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
-    'J': [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
-    'K': [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-    'L': [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
-    'M': [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11],
-    'N': [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-    'O': [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-    'P': [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
-    'Q': [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D],
-    'R': [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
-    'S': [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E],
-    'T': [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-    'U': [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-    'V': [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
-    'W': [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
-    'X': [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11],
-    'Y': [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
-    'Z': [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
-    ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-    '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C],
-}
+    for y in range(HIGHT):
+        # Determine sky vs dune
+        # We will compute dunes later, but sky base first
+        if y < horizon_y:
+            t = y / horizon_y
+            if t < 0.4:
+                col = blend(sky_top, sky_mid1, t / 0.4)
+            elif t < 0.75:
+                col = blend(sky_mid1, sky_mid2, (t - 0.4) / 0.35)
+            else:
+                col = blend(sky_mid2, sky_horizon, (t - 0.75) / 0.25)
+        else:
+            col = sky_horizon # placeholder before dunes
+        
+        row_offset = y * WIDTH * 3
+        for x in range(WIDTH):
+            buf[row_offset + x * 3] = col[0]
+            buf[row_offset + x * 1 + 1] = col[1]
+            buf[row_offset + x * 1 + 2] = col[2]
 
-def draw_text(pixels, text, start_x, start_y, scale=3, color=(255, 230, 180, 255)):
-    cur_x = start_x
-    for char in text.upper():
-        glyph = FONT_5X7.get(char, FONT_5X7[' '])
+    def set_pixel(x, y, rgb, alpha=1.0):
+        if 0 <= x < WIDTH and 0 <= y < HIGHT:
+            idx = (y * WIDTH + x) * 3
+            if alpha >= 1.0:
+                buf[idx] = clamp(rgb[0])
+                buf[idx+1] = clamp(rgb[1])
+                buf[idx+2] = clamp(rgb[2])
+            else:
+                buf[idx] = clamp(buf[idx] * (1 - alpha) + rgb[0] * alpha)
+                buf[idx+1] = clamp(buf[idx+1] * (1 - alpha) + rgb[1] * alpha)
+                buf[idx+2] = clamp(buf[idx+2] * (1 - alpha) + rgb[2] * alpha)
+
+    def draw_circle(cx, cy, radius, rgb, alpha=1.0):
+        min_x = max(0, int(cx - radius - 1))
+        max_x = min(WIDTH, int(cx + radius + 2))
+        min_y = max(0, int(cy - radius - 1))
+        max_y = min(HIGHT, int(cy + radius + 2))
+        r2 = radius * radius
+        for y in range(min_y, max_y):
+            dy = y - cy
+            for x in range(min_x, max_x):
+                dx = x - cx
+                dist2 = dx*dx + dy*dy
+                if dist2 <= r2:
+                    # anti-alias edge
+                    d = math.sqrt(dist2)
+                    a = alpha
+                    if radius > 1 and d > radius - 1:
+                        a *= (radius - d)
+                    set_pixel(x, y, rgb, a)
+
+    def draw_ellipse(cx, cy, rx, ry, rgb, alpha=1.0, angle=0.0):
+        # Rotated ellipse support for organic whale body
+        cos_a = math.cos(-angle)
+        sin_a = math.sin(-angle)
+        min_x = max(0, int(cx - max(rx, ry) - 2))
+        max_x = min(WIDTH, int(cx + max(rx, ry) + 3))
+        min_y = max(0, int(cy - max(rx, ry) - 2))
+        max_y = min(HIGHT, int(cy + max(rx, ry) + 3))
+        
+        for y in range(min_y, max_y):
+            dy = y - cy
+            for x in range(min_x, max_x):
+                dx = x - cx
+                # rotate
+                rx_val = dx * cos_a - dy * sin_a
+                ry_val = dx * sin_a + dy * cos_a
+                val = (rx_val / rx) ** 2 + (ry_val / ry) ** 2
+                if val <= 1.0:
+                    # anti-alias near edge
+                    edge = math.sqrt(val)
+                    a = alpha
+                    if edge > 0.85:
+                        a *= max(0.0, (1.0 - edge) / 0.15)
+                    set_pixel(x, y, rgb, a)
+
+    # Stars in upper sky (deterministic coordinates)
+    stars = [
+        (120, 80, 200), (340, 50, 220), (510, 110, 180), (780, 70, 240), (920, 130, 200),
+        (200, 160, 150), (450, 190, 210), (680, 140, 230), (880, 190, 190), (60, 220, 170),
+        (310, 250, 200), (600, 230, 220), (810, 270, 180), (150, 310, 210), (410, 330, 240)
+    ]
+    for sx, sy, sbri in stars:
+        draw_circle(sx, sy, 1.5, (sbri, sbri, 255), 0.8)
+        draw_circle(sx, sy, 3.0, (sbri, sbri, 255), 0.2)
+
+    # Soft elliptical clouds in upper-mid sky
+    clouds = [
+        (250, 220, 90, 25, (220, 150, 180), 0.25),
+        (750, 280, 120, 30, (230, 160, 170), 0.2),
+        (500, 180, 140, 22, (210, 140, 170), 0.22)
+    ]
+    for cx, cy, crx, cry, ccol, ca in clouds:
+        draw_ellipse(cx, cy, crx, cry, ccol, ca)
+
+    # Setting Sun low on horizon behind whale body: center around (550, 600)
+    sun_cx, sun_cy = 540, 600
+    sun_radius = 90
+    # Sun glow outer rings
+    for r in range(sun_radius + 40, sun_radius, -5):
+        glow_alpha = 0.05 * (1.0 - (r - sun_radius) / 40.0)
+        draw_circle(sun_cx, sun_cy, r, (255, 200, 100), glow_alpha)
+    # Sun disc
+    for y in range(max(0, sun_cy - sun_radius), min(HIGHT, sun_cy + sun_radius + 1)):
+        dy = y - sun_cy
+        for x in range(max(0, sun_cx - sun_radius), min(WIDTH, sun_cx + sun_radius + 1)):
+            dx = x - sun_cx
+            if dx*dx + dy*dy <= sun_radius*sun_radius:
+                # Gradient on sun disc: warm pale gold to yellow-white
+                t_sun = (dy + sun_radius) / (2 * sun_radius)
+                scol = (255, int(230 + 25 * t_sun), int(150 + 80 * t_sun))
+                set_pixel(x, y, scol, 0.95)
+
+    # Dunes across bottom: 3 layers
+    # Layer 3 (Back dune, dark mauve/brown): y ~ 540 down
+    # Layer 2 (Mid dune, warm brown): y ~ 620 down
+    # Layer 1 (Front dune, bright gold/sand): y ~ 720 down
+
+    def dune_y3(x):
+        return 550 + 35 * math.sin(x * 0.003 + 1.2) + 20 * math.cos(x * 0.007)
+    
+    def dune_y2(x):
+        return 630 + 40 * math.sin(x * 0.004 + 2.5) + 25 * math.sin(x * 0.008 + 0.5)
+
+    def dune_y1(x):
+        return 730 + 50 * math.sin(x * 0.0035 + 4.1) + 30 * math.cos(x * 0.006 + 1.0)
+
+    for y in range(horizon_y, HIGHT):
+        row_offset = y * WIDTH * 3
+        for x in range(WIDTH):
+            d3 = dune_y3(x)
+            d2 = dune_y2(x)
+            d1 = dune_y1(x)
+
+            if y >= d1:
+                # Front dune: bright gold/sand
+                dt = (y - d1) / (HIGHT - d1 + 1)
+                col = (int(215 - dt * 40), int(160 - dt * 30), int(80 - dt * 20))
+            elif y >= d2:
+                # Mid dune: warm brown
+                dt = (y - d2) / (d1 - d2 + 1)
+                col = (int(150 - dt * 20), int(95 - dt * 15), int(60 - dt * 10))
+            elif y >= d3:
+                # Back dune: dark mauve/brown
+                dt = (y - d3) / (d2 - d3 + 1)
+                col = (int(95 - dt * 15), int(55 - dt * 10), int(65 - dt * 10))
+            else:
+                # Sky near horizon
+                t = y / horizon_y
+                col = blend(sky_mid2, sky_horizon, (t - 0.75) / 0.25)
+
+            buf[row_offset + x * 3] = col[0]
+            buf[row_offset + x * 1 + 1] = col[1]
+            buf[row_offset + x * 1 + 2] = col[2]
+
+    # Caravan of 5 camels on mid-dune ridge at right (x around 680 to 920, y around dune_y1 or dune_y2)
+    def draw_camel(cx, cy, scale=1.0, with_rider=False):
+        # Silhouette color
+        cc = (45, 25, 20)
+        # Body (ellipse)
+        bw = int(22 * scale)
+        bh = int(12 * scale)
+        draw_ellipse(cx, cy - int(10 * scale), bw, bh, cc)
+        # Hump
+        hw = int(8 * scale)
+        hh = int(9 * scale)
+        draw_ellipse(cx - int(2 * scale), cy - int(20 * scale), hw, hh, cc)
+        # Neck & Head
+        # Neck curve from body front up to head
+        nx, ny = cx + int(12 * scale), cy - int(12 * scale)
+        for i in range(12):
+            t = i / 11.0
+            px = int(cx + int(10 * scale) + t * int(8 * scale))
+            py = int(cy - int(10 * scale) - t * int(18 * scale))
+            draw_circle(px, py, max(1.5, int(2.5 * scale)), cc)
+        # Head
+        draw_circle(cx + int(18 * scale), cy - int(27 * scale), int(3 * scale), cc)
+        # 4 Legs (thin lines)
+        leg_len = int(18 * scale)
+        # Front legs
+        for leg_dx in [int(10 * scale), int(14 * scale)]:
+            for ly in range(leg_len):
+                set_pixel(cx + leg_dx, cy - int(4 * scale) + ly, cc)
+        # Back legs
+        for leg_dx in [-int(10 * scale), -int(6 * scale)]:
+            for ly in range(leg_len):
+                set_pixel(cx + leg_dx, cy - int(4 * scale) + ly, cc)
+        # Rider if requested
+        if with_rider:
+            draw_circle(cx - int(2 * scale), cy - int(32 * scale), int(3.5 * scale), (240, 220, 180))
+
+    camel_positions = [
+        (720, int(dune_y1(720)) - 2, 0.85, True),
+        (770, int(dune_y1(770)) - 2, 0.9, False),
+        (825, int(dune_y1(825)) - 2, 1.0, True),
+        (875, int(dune_y1(875)) - 2, 0.95, False),
+        (920, int(dune_y1(920)) - 2, 0.8, False)
+    ]
+    for cx, cy, scl, wr in camel_positions:
+        draw_camel(cx, cy, scl, wr)
+
+    # THE WHALE: Colossal whale breaching diagonally from lower-left to upper-right.
+    # Path center from (240, 830) up-right to (780, 280). Angle ~ -45 degrees (-0.785 rad).
+    # Let's construct the whale body along a smooth arc or parametric spline.
+    # We will draw a series of overlapping ellipses along the smooth curve from tail flukes to head.
+
+    whale_start_x, whale_start_y = 220, 860 # Head end exiting the dune
+    whale_end_x, whale_end_y = 780, 260   # Tail flukes end high in the sky
+
+    # Let's define control points for the curved organic body (banana/crescent shape):
+    # We can sample 30 points along a quadratic bezier or smooth curve.
+    # P0 = (220, 860), P1 = (450, 520), P2 = (780, 260)
+    p0 = (220, 860)
+    p1 = (460, 500)
+    p2 = (780, 260)
+
+    steps = 80
+    body_coords = []
+    for i in range(steps + 1):
+        t = i / float(steps)
+        # Quadratic bezier
+        bx = (1 - t)**2 * p0[0] + 2 * (1 - t) * t * p1[0] + t**2 * p2[0]
+        by = (1 - t)**2 * p0[1] + 2 * (1 - t) * t * p1[1] + t**2 * p2[1]
+        
+        # Thickness profile along t: t=0 (head, radius ~35), t=0.5 (torso, radius ~60), t=1.0 (tail stock, radius ~15)
+        if t < 0.15:
+            # Head rounded blunt shape
+            r = 35 + t * 50
+        elif t < 0.7:
+            # Main torso (dominates frame)
+            r = 55 + 15 * math.sin((t - 0.15) / 0.55 * math.pi)
+        else:
+            # Tapering tail stock
+            r = 55 * (1.0 - (t - 0.7) / 0.3) + 12
+        body_coords.append((bx, by, r))
+
+    # Draw whale body segments (smooth organic gradient: dark blue-gray underside, rich deep blue-gray body, iridescent light top)
+    body_base_col = (40, 55, 85)
+    body_top_col = (110, 135, 170)
+    body_belly_col = (25, 35, 50)
+
+    for bx, by, r in body_coords:
+        # Draw filled circle/ellipse at each point with shading
+        steps_r = int(r)
+        for dy in range(-steps_r - 2, steps_r + 3):
+            for dx in range(-steps_r - 2, steps_r + 3):
+                dist = math.sqrt(dx*dx + dy*dy)
+                if dist <= r:
+                    px = int(bx + dx)
+                    py = int(by + dy)
+                    # Shading based on vertical offset (top vs bottom of whale body)
+                    shade = dy / (r + 1e-5) # -1.0 (top) to +1.0 (bottom)
+                    if shade < 0:
+                        # Upper side: lighter highlight
+                        col = blend(body_base_col, body_top_col, -shade)
+                    else:
+                        # Lower side: darker belly shadow
+                        col = blend(body_base_col, body_belly_col, shade)
+                    set_pixel(px, py, col)
+
+    # Head details at p0 (220, 860):
+    # Small white eye with dark pupil
+    eye_x, eye_y = p0[0] - 10, p0[1] - 5
+    draw_circle(eye_x, eye_y, 4, (240, 240, 240))
+    draw_circle(eye_x - 1, eye_y, 2, (15, 20, 30))
+
+    # Spout above head: fan of 5-7 white droplets arcing upward plus soft white mist cloud
+    spout_base_x, spout_base_y = p0[0] - 15, p0[1] - 30
+    # Mist cloud
+    for mc_dx, mc_dy, mc_r in [(-10, -20, 18), (0, -30, 22), (12, -22, 16), (5, -40, 14)]:
+        draw_circle(spout_base_x + mc_dx, spout_base_y + mc_dy, mc_r, (230, 240, 250), 0.35)
+    # Spout droplets arcing
+    droplets = [
+        (-25, -15), (-35, -30), (-40, -50), (-20, -45), (-5, -60),
+        (5, -55), (18, -40), (25, -25), (10, -35), (-12, -55)
+    ]
+    for d_dx, d_dy in droplets:
+        draw_circle(spout_base_x + d_dx, spout_base_y + d_dy, 2.5, (255, 255, 255), 0.9)
+        draw_circle(spout_base_x + d_dx, spout_base_y + d_dy, 4.5, (220, 235, 250), 0.3)
+
+    # Dorsal fin on upper back (around t=0.4)
+    df_idx = int(len(body_coords) * 0.4)
+    df_x, df_y, _ = body_coords[df_idx]
+    # Draw triangular dorsal fin pointing up-left
+    for fy in range(25):
+        width_at_y = int(16 * (1.0 - fy / 25.0))
+        for fx in range(-width_at_y, width_at_y // 2 + 2):
+            set_pixel(int(df_x + fx - 5), int(df_y - r - fy), (50, 70, 100))
+
+    # Flipper protruding from lower side of body (around t=0.25)
+    fl_idx = int(len(body_coords) * 0.25)
+    fl_x, fl_y, _ = body_coords[fl_idx]
+    draw_ellipse(fl_x - 15, fl_y + 25, 22, 8, (45, 60, 90), angle=0.6)
+
+    # TAIL FLUKES at upper end p2 (780, 260): TWO DISTINCT TAIL FLUKES (horizontal, fan-shaped, like a butterfly - big and obvious)
+    fluke_cx, fluke_cy = p2[0], p2[1]
+    # Left fluke and right fluke
+    draw_ellipse(fluke_cx - 35, fluke_cy - 15, 35, 14, (70, 90, 120), angle=-0.3)
+    draw_ellipse(fluke_cx + 35, fluke_cy - 15, 35, 14, (70, 90, 120), angle=0.3)
+    # Center notch/peduncle connection
+    draw_circle(fluke_cx, fluke_cy, 12, (60, 80, 110))
+
+    # BREACH POINT: white water spray (many small droplets plus foam arcs) and flying sand particles where the whale exits the dune (p0)
+    spray_center_x, spray_center_y = p0[0], p0[1]
+    # Foam arcs
+    for r_arc in range(15, 60, 8):
+        for angle_deg in range(130, 225, 5):
+            rad = math.radians(angle_deg)
+            sx = int(spray_center_x + r_arc * math.cos(rad))
+            sy = int(spray_center_y + r_arc * math.sin(rad))
+            draw_circle(sx, sy, 2.5, (255, 255, 255), 0.7)
+    # Random-looking deterministic spray droplets & sand particles
+    for i in range(120):
+        # deterministic pseudo-random offset using sine/cosine hash
+        px = spray_center_x + int(80 * math.sin(i * 17.3))
+        py = spray_center_y + int(60 * math.cos(i * 31.7)) - 10
+        if (i % 2 == 0):
+            # Water droplet (white/cyan-white)
+            draw_circle(px, py, 2.0, (240, 250, 255), 0.8)
+        else:
+            # Sand particle (golden/amber)
+            draw_circle(px, py, 1.5, (230, 180, 100), 0.9)
+
+    # CAPTION: THE DESERT DREAMED OF THE SEA in a clean 5x7 bitmap font, centered near bottom (y = 960), below a thin gold horizontal line (y = 940)
+    line_y = 935
+    for lx in range(150, WIDTH - 150):
+        set_pixel(lx, line_y, (235, 180, 80))
+        set_pixel(lx, line_y + 1, (235, 180, 80), 0.5)
+
+    # Simple 5x7 bitmap font dictionary for uppercase letters and spaces
+    FONT_5X7 = {
+        'A': [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+        'B': [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
+        'C': [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
+        'D': [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E],
+        'E': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
+        'F': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
+        'G': [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F],
+        'H': [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+        'I': [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
+        'J': [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
+        'K': [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
+        'L': [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
+        'M': [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11],
+        'N': [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+        'O': [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
+        'P': [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
+        'Q': [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D],
+        'R': [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
+        'S': [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E],
+        'T': [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+        'U': [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
+        'V': [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
+        'W': [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
+        'X': [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11],
+        'Y': [0x11, 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04],
+        'Z': [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
+        ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    }
+
+    caption_text = "THE DESERT DREAMED OF THE SEA"
+    char_w = 5
+    char_h = 7
+    scale_f = 3
+    spacing = 2
+    total_w = len(caption_text) * (char_w * scale_f + spacing * scale_f) - spacing * scale_f
+    start_x = (WIDTH - total_w) // 2
+    start_y = 965
+
+    curr_x = start_x
+    for ch in caption_text:
+        glyph = FONT_5X7.get(ch, FONT_5X7[' '])
         for row_idx, row_val in enumerate(glyph):
-            for col_idx in range(5):
-                if (row_val >> (4 - col_idx)) & 1:
-                    for sx in range(scale):
-                        for sy in range(scale):
-                            px = cur_x + col_idx * scale + sx
-                            py = start_y + row_idx * scale + sy
-                            if 0 <= px < WIDTH and 0 <= py < HEIGHT:
-                                idx = (py * WIDTH + px) * 4
-                                # Alpha blend
-                                src_a = color[3] / 255.0
-                                dst_r, dst_g, dst_b, dst_a = pixels[idx], pixels[idx+1], pixels[idx+2], pixels[idx+3]
-                                r = int(color[0] * src_a + dst_r * (1 - src_a))
-                                g = int(color[1] * src_a + dst_g * (1 - src_a))
-                                b = int(color[2] * src_a + dst_b * (1 - src_a))
-                                a = min(255, color[3] + dst_a)
-                                pixels[idx] = r
-                                pixels[idx+1] = g
-                                pixels[idx+2] = b
-                                pixels[idx+3] = a
-        cur_x += (5 + 1) * scale
+            for col_idx in range(char_w):
+                if (row_val >> (char_w - 1 - col_idx)) & 1:
+                    # Draw scaled pixel block
+                    for sy_off in range(scale_f):
+                        for sx_off in range(scale_f):
+                            px = curr_x + col_idx * scale_f + sx_off
+                            py = start_y + row_idx * scale_f + sy_off
+                            set_pixel(px, py, (255, 245, 220))
+        curr_x += (char_w * scale_f + spacing * scale_f)
+
+    return buf
+
+def write_png(filepath, width, height, rgb_buf):
+    # Construct PNG file bytes
+    # Signature
+    png_data = bytearray(b'\x89PNG\r\n\x1a\n')
+
+    def add_chunk(chunk_type, data):
+        png_data.extend(struct.pack('>I', len(data)))
+        png_data.extend(chunk_type)
+        png_data.extend(data)
+        crc = zlib.crc32(chunk_type + data) & 0xFFFFFFFF
+        png_data.extend(struct.pack('>I', crc))
+
+    # IHDR chunk: width, height, bit depth (8), color type (2 = RGB), compression (0), filter (0), interlace (0)
+    ihdr_data = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+    add_chunk(b'IHDR', ihdr_data)
+
+    # IDAT chunk: filter byte (0) + scanline data for each row
+    raw_scanlines = bytearray()
+    row_stride = width * 3
+    for y in range(height):
+        raw_scanlines.append(0) # filter type 0 (None)
+        start = y * row_stride
+        raw_scanlines.extend(rgb_buf[start:start + row_stride])
+
+    compressed_data = zlib.compress(bytes(raw_scanlines), level=6)
+    add_chunk(b'IDAT', compressed_data)
+
+    # IEND chunk
+    add_chunk(b'IEND', b'')
+
+    # Ensure parent dir exists
+    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+    with open(filepath, 'wb') as f:
+        f.write(png_data)
 
 def main():
-    # Initialize pixel buffer (RGBA)
-    pixels = bytearray(WIDTH * HEIGHT * 4)
-
-    # 1. SKY GRADIENT & BACKGROUND
-    # Horizon at y = 680
-    HORIZON = 680
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            idx = (y * WIDTH + x) * 4
-            if y < HORIZON:
-                # Vertical gradient: indigo (20,15,50) at top -> magenta (120,30,90) at mid -> deep orange (230,110,40) at horizon
-                t = y / HORIZON
-                if t < 0.5:
-                    u = t * 2.0
-                    r = int(20 * (1 - u) + 120 * u)
-                    g = int(15 * (1 - u) + 30 * u)
-                    b = int(50 * (1 - u) + 90 * u)
-                else:
-                    u = (t - 0.5) * 2.0
-                    r = int(120 * (1 - u) + 230 * u)
-                    g = int(30 * (1 - u) + 110 * u)
-                    b = int(90 * (1 - u) + 40 * u)
-            else:
-                # Below horizon (will be overwritten by dunes, but default base)
-                r, g, b = 230, 110, 40
-            pixels[idx] = r
-            pixels[idx+1] = g
-            pixels[idx+2] = b
-            pixels[idx+3] = 255
-
-    # 2. STARS (deterministic positions)
-    stars = [
-        (120, 80), (340, 50), (520, 110), (780, 70), (910, 140),
-        (210, 180), (450, 150), (670, 90), (850, 200), (950, 80),
-        (80, 240), (300, 220), (600, 210), (730, 170), (160, 120)
-    ]
-    for (sx, sy) in stars:
-        for dy in range(-1, 2):
-            for dx in range(-1, 2):
-                nx, ny = sx + dx, sy + dy
-                if 0 <= nx < WIDTH and 0 <= ny < HORIZON:
-                    idx = (ny * WIDTH + nx) * 4
-                    # Soft star glow
-                    dist = abs(dx) + abs(dy)
-                    intensity = 255 if dist == 0 else 150 if dist == 1 else 60
-                    pixels[idx] = min(255, pixels[idx] + intensity)
-                    pixels[idx+1] = min(255, pixels[idx+1] + intensity)
-                    pixels[idx+2] = min(255, pixels[idx+2] + intensity)
-
-    # 3. SOFT CLOUDS
-    clouds = [
-        (250, 220, 120, 35, 140, 90, 110),
-        (750, 280, 150, 40, 160, 80, 100),
-        (500, 170, 100, 30, 130, 100, 120)
-    ]
-    for (cx, cy, rx, ry, cr, cg, cb) in clouds:
-        for y in range(max(0, cy - ry), min(HORIZON, cy + ry)):
-            for x in range(max(0, cx - rx), min(WIDTH, cx + rx)):
-                norm_sq = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2
-                if norm_sq <= 1.0:
-                    alpha = (1.0 - math.sqrt(norm_sq)) * 0.35
-                    idx = (y * WIDTH + x) * 4
-                    pixels[idx] = int(pixels[idx] * (1 - alpha) + cr * alpha)
-                    pixels[idx+1] = int(pixels[idx+1] * (1 - alpha) + cg * alpha)
-                    pixels[idx+2] = int(pixels[idx+2] * (1 - alpha) + cb * alpha)
-
-    # 4. SETTING SUN WITH GLOW RING
-    SUN_X, SUN_Y, SUN_R = 640, 560, 110
-    for y in range(max(0, SUN_Y - SUN_R - 60), min(HORIZON, SUN_Y + SUN_R + 60)):
-        for x in range(max(0, SUN_X - SUN_R - 60), min(WIDTH, SUN_X + SUN_R + 60)):
-            dist = math.sqrt((x - SUN_X)**2 + (y - SUN_Y)**2)
-            idx = (y * WIDTH + x) * 4
-            if dist <= SUN_R:
-                # Pale gold disc
-                factor = 1.0 - (dist / SUN_R) * 0.2
-                pixels[idx] = min(255, int(255 * factor))
-                pixels[idx+1] = min(255, int(235 * factor))
-                pixels[idx+2] = min(255, int(160 * factor))
-            elif dist <= SUN_R + 50:
-                # Glow halo ring
-                ring_t = (dist - SUN_R) / 50.0
-                alpha = (1.0 - ring_t) * 0.4
-                r = int(pixels[idx] * (1 - alpha) + 255 * alpha)
-                g = int(pixels[idx+1] * (1 - alpha) + 180 * alpha)
-                b = int(pixels[idx+2] * (1 - alpha) + 80 * alpha)
-                pixels[idx] = r
-                pixels[idx+1] = g
-                pixels[idx+2] = b
-
-    # 5. DUNES (3 layers)
-    # Layer 1 (Back, dark mauve/brown)
-    for x in range(WIDTH):
-        dune_y = int(620 + 40 * math.sin(x * 0.005 + 1.2) + 20 * math.cos(x * 0.01))
-        for y in range(dune_y, HEIGHT):
-            idx = (y * WIDTH + x) * 4
-            # gradient down dune
-            depth = (y - dune_y) / (HEIGHT - dune_y + 1)
-            r = int(110 + 20 * depth)
-            g = int(65 + 15 * depth)
-            b = int(55 + 10 * depth)
-            pixels[idx] = r
-            pixels[idx+1] = g
-            pixels[idx+2] = b
-
-    # Layer 2 (Mid, warm brown)
-    for x in range(WIDTH):
-        dune_y = int(720 + 50 * math.cos(x * 0.006 - 0.5) + 25 * math.sin(x * 0.012))
-        for y in range(dune_y, HEIGHT):
-            idx = (y * WIDTH + x) * 4
-            depth = (y - dune_y) / (HEIGHT - dune_y + 1)
-            r = int(170 + 25 * depth)
-            g = int(100 + 20 * depth)
-            b = int(60 + 15 * depth)
-            pixels[idx] = r
-            pixels[idx+1] = g
-            pixels[idx+2] = b
-
-    # Layer 3 (Front, bright gold sand)
-    for x in range(WIDTH):
-        dune_y = int(820 + 60 * math.sin(x * 0.004 + 2.5) + 30 * math.cos(x * 0.008))
-        for y in range(dune_y, HEIGHT):
-            idx = (y * WIDTH + x) * 4
-            depth = (y - dune_y) / (HEIGHT - dune_y + 1)
-            r = int(220 + 25 * depth)
-            g = int(150 + 20 * depth)
-            b = int(75 + 15 * depth)
-            pixels[idx] = r
-            pixels[idx+1] = g
-            pixels[idx+2] = b
-
-    # 6. COLOSSAL WHALE BREACHING DIAGONALLY
-    # Whale body curve from lower-left (200, 850) to upper-right (820, 280)
-    # Let's define a parametric path for the whale body
-    WHALE_COLOR = (40, 45, 95)
-    RIM_COLOR = (255, 200, 110)
-
-    # We can rasterize the whale body as a thick smooth ribbon/ellipse along a diagonal path
-    def in_whale(x, y):
-        # Path parameter t from 0 (head in air / upper right) to 1 (tail in dunes / lower left)
-        # Centerline approx: x(t) = 820 - 620*t, y(t) = 280 + 570*t
-        # Let's test distance to the centerline curve or segments
-        # Simpler: check distance to line segments from (200,850) to (820,280) with variable thickness (thick in middle, tapered at ends)
-        x1, y1 = 200, 850  # Tail / breach point
-        x2, y2 = 820, 280  # Head / snout
-        
-        dx = x2 - x1
-        dy = y2 - y1
-        length_sq = dx*dx + dy*dy
-        if length_sq == 0:
-            return False, 0
-            
-        t = ((x - x1) * dx + (y - y1) * dy) / length_sq
-        if -0.1 <= t <= 1.1:
-            # Closest point on line
-            cx = x1 + t * dx
-            cy = y1 + t * dy
-            dist = math.sqrt((x - cx)**2 + (y - cy)**2)
-            
-            # Width profile along t: taper at ends (t=0 and t=1), thickest around t=0.4 (approx 120 pixels radius)
-            # t=0: tail (r=30), t=0.4: body (r=120), t=1.0: head (r=50)
-            if t < 0.2:
-                radius = 30 + t * 450  # 30 to 120
-            elif t < 0.7:
-                radius = 120 - (t - 0.2) * 20  # 120 to 110
-            else:
-                radius = 110 * (1.1 - t) / 0.4 + 20  # tapers to head
-                
-            if dist <= radius:
-                # Check for rim light on upper-left edge (where light hits back)
-                is_rim = (x - cx) < -radius * 0.6 and t > 0.1
-                return True, is_rim
-        return False, False
-
-    # Draw whale body
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            inside, rim = in_whale(x, y)
-            if inside:
-                idx = (y * WIDTH + x) * 4
-                if rim:
-                    pixels[idx] = RIM_COLOR[0]
-                    pixels[idx+1] = RIM_COLOR[1]
-                    pixels[idx+2] = RIM_COLOR[2]
-                else:
-                    pixels[idx] = WHALE_COLOR[0]
-                    pixels[idx+1] = WHALE_COLOR[1]
-                    pixels[idx+2] = WHALE_COLOR[2]
-
-    # Add dorsal fin, flipper, eye, and blowhole spout details
-    # Dorsal fin around (550, 420)
-    for y in range(350, 460):
-        for x in range(480, 580):
-            # Triangle shape for dorsal fin
-            if y >= 380 and x - 480 + (y - 380) * 0.8 <= 80 and x >= 490:
-                idx = (y * WIDTH + x) * 4
-                if 0 <= idx < len(pixels) - 3:
-                    # Rim light on left edge of fin
-                    if x < 510:
-                        pixels[idx] = RIM_COLOR[0]
-                        pixels[idx+1] = RIM_COLOR[1]
-                        pixels[idx+2] = RIM_COLOR[2]
-                    else:
-                        pixels[idx] = WHALE_COLOR[0]
-                        pixels[idx+1] = WHALE_COLOR[1]
-                        pixels[idx+2] = WHALE_COLOR[2]
-
-    # Flipper around (400, 600)
-    for y in range(540, 680):
-        for x in range(320, 440):
-            if (y - 540) > 0.5 * abs(x - 380):
-                idx = (y * WIDTH + x) * 4
-                if 0 <= idx < len(pixels) - 3:
-                    pixels[idx] = WHALE_COLOR[0]
-                    pixels[idx+1] = WHALE_COLOR[1]
-                    pixels[idx+2] = WHALE_COLOR[2]
-
-    # Blowhole spout (white water spray arcing up from head around (760, 320))
-    for sy_off in range(-80, 20):
-        for sx_off in range(-40, 40):
-            spout_x = 760 + sx_off + int(sy_off * 0.5)
-            spout_y = 320 + sy_off
-            if 0 <= spout_x < WIDTH and 0 <= spout_y < HEIGHT:
-                dist_spray = math.sqrt(sx_off**2 + (sy_off + 30)**2)
-                if dist_spray < 35:
-                    idx = (spout_y * WIDTH + spout_x) * 4
-                    alpha = max(0.0, 1.0 - dist_spray / 35.0) * 0.8
-                    pixels[idx] = int(pixels[idx] * (1 - alpha) + 240 * alpha)
-                    pixels[idx+1] = int(pixels[idx+1] * (1 - alpha) + 245 * alpha)
-                    pixels[idx+2] = int(pixels[idx+2] * (1 - alpha) + 255 * alpha)
-
-    # 7. BREACH POINT (Water spray, foam, sand burst at lower left around (200, 850))
-    for by in range(750, 950):
-        for bx in range(100, 320):
-            dist_breach = math.sqrt((bx - 200)**2 + (by - 850)**2)
-            if dist_breach < 90:
-                idx = (by * WIDTH + bx) * 4
-                if 0 <= idx < len(pixels) - 3:
-                    mix = 1.0 - (dist_breach / 90.0)
-                    # Blend foam white and golden sand burst
-                    r = int(pixels[idx] * (1 - mix) + 235 * mix)
-                    g = int(pixels[idx+1] * (1 - mix) + 220 * mix)
-                    b = int(pixels[idx+2] * (1 - mix) + 190 * mix)
-                    pixels[idx] = r
-                    pixels[idx+1] = g
-                    pixels[idx+2] = b
-
-    # 8. CARAVAN OF FIVE TINY CAMELS on dune ridge at right (around x=840..920, y=780)
-    camel_positions = [850, 875, 900, 920, 940]
-    for cx in camel_positions:
-        # Each camel: small dark silhouette with legs and hump
-        cy = int(795 + 15 * math.sin(cx * 0.006 - 0.5))
-        for dy in range(-12, 5):
-            for dx in range(-8, 9):
-                # Body and hump
-                if (dy >= -6 and abs(dx) <= 6) or (dy < -6 and dy >= -12 and abs(dx) <= 3):
-                    px, py = cx + dx, cy + dy
-                    if 0 <= px < WIDTH and 0 <= py < HEIGHT:
-                        idx = (py * WIDTH + px) * 4
-                        pixels[idx] = 40
-                        pixels[idx+1] = 25
-                        pixels[idx+2] = 20
-
-    # 9. CAPTION & DIVIDER LINE
-    # Thin gold horizontal line at y = 940
-    for x in range(150, WIDTH - 150):
-        for y in range(940, 943):
-            idx = (y * WIDTH + x) * 4
-            pixels[idx] = 255
-            pixels[idx+1] = 215
-            pixels[idx+2] = 120
-
-    # Caption text: "THE DESERT DREAMED OF_THE SEA" -> "THE DESERT DREAMED OF THE SEA"
-    caption_text = "THE DESERT DREAMED OF THE SEA"
-    # Each char is 5 cols wide + 1 space = 6 pixels per char, scale 3 -> 18 pixels per char. 29 chars * 18 = 522 pixels wide.
-    # Center at WIDTH / 2 = 512 -> start_x = 512 - 522//2 = 251.
-    draw_text(pixels, caption_text, start_x=235, start_y=965, scale=3, color=(255, 235, 190, 255))
-
-    # 10. OUTPUT WRITING
+    # Output path rule: os.environ.get('MAKEFUN_OUTPUT_DIR', '/output') / 'entry.png'
     out_dir = os.environ.get('MAKEFUN_OUTPUT_DIR', '/output')
-    if not os.path.exists(out_dir):
-        try:
-            os.makedirs(out_dir, exist_ok=True)
-        except Exception:
-            out_dir = '.'
-            os.makedirs(out_dir, exist_ok=True)
-
+    os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, 'entry.png')
-    png_bytes = create_png(WIDTH, HEIGHT, pixels)
-    
-    with open(out_path, 'wb') as f:
-        f.write(png_bytes)
 
-    print(f"Successfully wrote {len(png_bytes)} bytes to {out_path}")
+    pixels = draw_canvas()
+    write_png(out_path, WIDTH, HIGHT, pixels)
+    print(f"Successfully generated entry.png at {out_path} ({len(pixels)} RGB bytes)")
 
 if __name__ == '__main__':
     main()
