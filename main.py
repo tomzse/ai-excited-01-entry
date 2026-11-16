@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""ai-excited-01 entry: draw one exciting image, write it to /output/entry.png.
+"""ai-excited-01 entry (v2): draw one exciting image, write /output/entry.png.
 
 A tiny lit city rides on the back of a colossal sea turtle, mid-stride
-through a golden-hour ocean, sun low on the horizon, birds scattering.
-Extreme scale contrast, one thrilling moment, flat vector style so the
-idea still hits at 300 px wide.
+through a golden-hour ocean, sun low on the horizon, birds scattering
+in a wide arc, foam bursting from the lifted flipper and a wake curling
+behind. Extreme scale contrast, one thrilling moment, flat vector
+style so the idea still hits at 300 px wide.
 
 Drawn procedurally into a 1024x1024 RGB buffer and encoded as PNG by
 hand (zlib + struct). Standard library only: no network, no clock, no
@@ -18,30 +19,33 @@ import zlib
 
 W = 1024
 H = 1024
+HORIZON = 700
 
-# ---- palette: golden-hour flat vector -------------------------------
-SKY_TOP = (24, 16, 64)        # deep indigo, top of sky
-SKY_MID = (122, 44, 139)      # magenta purple
-SKY_LOW = (226, 87, 76)       # coral
-SKY_HOR = (249, 160, 63)      # gold at the horizon
-SUN_CORE = (255, 215, 106)    # sun disc
-SUN_HALO = (255, 158, 61)     # sun glow ring
-CLOUD = (247, 178, 103)       # warm cloud bellies
-CLOUD_HI = (255, 214, 150)    # cloud tops catching sun
-SEA = (13, 74, 88)            # deep teal sea
-SEA_LIGHT = (46, 139, 154)    # sea streaks
-SUN_PATH = (232, 145, 58)     # sun reflection on the water
-SHELL = (29, 91, 69)          # turtle shell
-SHELL_DARK = (18, 72, 54)     # shell shadow plates
-SHELL_PLATE = (47, 122, 92)   # shell plate tops
-RIM = (249, 200, 107)         # warm rim light on the shell
-SKIN = (74, 140, 108)          # turtle neck, head, legs
-SKIN_DARK = (38, 88, 66)      # turtle shadow side
-CITY = (34, 22, 54)           # city silhouette
-WINDOW = (255, 215, 106)      # lit windows
-BEAM = (255, 233, 168)        # lighthouse beam
-BIRD = (28, 16, 48)           # birds
-SPRAY = (207, 232, 224)       # spray and foam
+# ---- palette: bolder golden hour ------------------------------------
+SKY_TOP = (20, 12, 58)        # deep indigo, top of sky
+SKY_MID = (128, 38, 132)      # magenta purple
+SKY_LOW = (232, 92, 70)       # coral
+SKY_HOR = (252, 166, 64)      # gold at the horizon
+SUN_CORE = (255, 220, 120)    # sun disc
+SUN_HALO = (255, 164, 66)     # sun glow ring
+GLOW = (244, 130, 70)         # sun outer glow, pre-blended with the sky
+CLOUD = (248, 182, 108)       # warm cloud bellies
+CLOUD_HI = (255, 216, 152)    # cloud tops catching sun
+SEA = (10, 70, 84)            # deep teal sea
+SEA_LIGHT = (52, 148, 160)    # sea streaks
+SUN_PATH = (238, 152, 60)     # sun reflection on the water
+WAVE = (36, 120, 138)         # curling wake body
+SHELL = (30, 96, 72)          # turtle shell
+SHELL_DARK = (16, 68, 50)     # shell shadow plates
+SHELL_PLATE = (52, 130, 98)   # shell plate tops
+RIM = (252, 206, 110)         # warm rim light on the shell
+SKIN = (78, 146, 112)         # turtle neck, head, flippers
+SKIN_DARK = (36, 86, 64)      # turtle shadow side
+CITY = (30, 20, 52)           # city silhouette
+WINDOW = (255, 218, 110)      # lit windows
+BEAM = (255, 236, 175)        # lighthouse beam
+BIRD = (26, 14, 46)           # birds
+SPRAY = (214, 236, 228)       # spray and foam
 
 
 def _lerp(a, b, t):
@@ -148,42 +152,60 @@ class Canvas:
         self.disc(x1, y1, w // 2, rgb)
 
 
-# ---- scene: sky, sun, clouds, sea ------------------------------------
-GLOW = (240, 122, 68)         # sun outer glow, pre-blended with the sky
-
-
+# ---- scene: sky, sun, clouds, sea, wake -------------------------------
 def draw_sky(c):
-    c.vgrad(0, 719, [(0.0, SKY_TOP), (0.45, SKY_MID),
-                     (0.75, SKY_LOW), (1.0, SKY_HOR)])
+    c.vgrad(0, HORIZON, [(0.0, SKY_TOP), (0.45, SKY_MID),
+                         (0.75, SKY_LOW), (1.0, SKY_HOR)])
 
 
 def draw_sun(c):
-    c.disc(800, 560, 190, GLOW)
-    c.disc(800, 560, 150, SUN_HALO)
-    c.disc(800, 560, 88, SUN_CORE)
+    c.disc(815, 545, 200, GLOW)
+    c.disc(815, 545, 160, SUN_HALO)
+    c.disc(815, 545, 98, SUN_CORE)
 
 
 def draw_clouds(c):
-    c.ellipse(210, 170, 130, 15, CLOUD)
-    c.ellipse(620, 110, 160, 16, CLOUD_HI)
-    c.ellipse(880, 300, 110, 13, CLOUD)
-    c.ellipse(140, 330, 100, 13, CLOUD_HI)
-    c.ellipse(470, 250, 90, 11, CLOUD)
+    # long speed-streak clouds, thin and overlapping, lit from below
+    c.ellipse(190, 150, 180, 10, CLOUD)
+    c.ellipse(540, 96, 230, 12, CLOUD_HI)
+    c.ellipse(860, 235, 150, 10, CLOUD)
+    c.ellipse(300, 305, 185, 10, CLOUD_HI)
+    c.ellipse(660, 185, 125, 8, CLOUD)
+    c.ellipse(120, 420, 130, 9, CLOUD_HI)
+    c.ellipse(470, 430, 110, 8, CLOUD)
+    # a few small puffs catching the sun
+    c.ellipse(730, 330, 60, 9, CLOUD_HI)
+    c.ellipse(250, 210, 55, 8, CLOUD)
 
 
 def draw_sea(c):
-    c.rect(0, 720, W - 1, H - 1, SEA)
-    # sun shimmer: short dashes only where the sea is visible
-    for y, x0, x1 in ((748, 950, 1015), (800, 955, 1010), (860, 20, 90),
-                      (920, 960, 1015), (985, 30, 110)):
-        c.rect(x0, y, x1, y + 5, SUN_PATH)
-    # long shimmer streaks across the water
-    for y, x0, x1 in ((748, 40, 420), (792, 880, 1010), (858, 30, 300),
-                      (912, 900, 1020), (968, 60, 380), (1005, 850, 1020)):
+    c.rect(0, HORIZON, W - 1, H - 1, SEA)
+    # wide shimmering sun-path under the sun: a column of gold dashes
+    for y, x0, x1 in ((726, 716, 918), (758, 700, 936), (792, 726, 912),
+                      (828, 706, 930), (864, 730, 906), (900, 712, 924),
+                      (936, 734, 900), (972, 720, 916), (1004, 740, 896)):
+        c.rect(x0, y, x1, y + 6, SUN_PATH)
+    # cool streaks across the open water, left and right of the path
+    for y, x0, x1 in ((742, 30, 320), (798, 60, 260), (856, 20, 300),
+                      (916, 90, 340), (972, 30, 250), (1010, 120, 330)):
         c.rect(x0, y, x1, y + 5, SEA_LIGHT)
     # tiny sailboat far right, for scale against the turtle
-    c.poly([(955, 772), (966, 742), (977, 772)], SPRAY)
-    c.rect(948, 772, 984, 780, CITY)
+    c.poly([(952, 766), (963, 736), (974, 766)], SPRAY)
+    c.rect(945, 766, 981, 774, CITY)
+    # an even tinier boat far left, almost lost in the light
+    c.poly([(52, 742), (60, 722), (68, 742)], SPRAY)
+    c.rect(47, 742, 73, 748, CITY)
+
+
+def draw_wake(c):
+    # foam flecks where the shell meets the sea — small broken marks in
+    # the visible water just above the shell's edge, so they read as
+    # spray, not plates
+    for x, y, r in ((60, 730, 5), (100, 725, 6), (150, 735, 5),
+                    (190, 745, 4), (230, 748, 5), (860, 725, 5),
+                    (900, 735, 6), (950, 728, 5), (990, 740, 5),
+                    (1010, 760, 4), (990, 940, 6), (1010, 900, 5)):
+        c.disc(x, y, r, SPRAY)
 
 
 # ---- scene: turtle, city, birds, spray --------------------------------
@@ -198,64 +220,79 @@ def _hexagon(cx, cy, r):
 
 def draw_turtle(c):
     # rim light: gold shell shifted up, then the green shell over it
-    c.ellipse(480, 1038, 520, 330, RIM)
-    c.ellipse(480, 1050, 520, 330, SHELL)
+    c.ellipse(470, 1052, 545, 340, RIM)
+    c.ellipse(470, 1064, 545, 340, SHELL)
     # shell plates: hexagons with dark gaps showing the shell beneath
-    for cx, cy, r in ((330, 800, 62), (480, 760, 70), (630, 800, 62),
-                      (280, 920, 58), (430, 900, 66), (580, 920, 58),
-                      (700, 860, 52), (380, 990, 60), (560, 990, 60)):
+    for cx, cy, r in ((315, 795, 64), (470, 752, 72), (625, 795, 64),
+                      (265, 915, 60), (425, 895, 68), (580, 915, 60),
+                      (705, 855, 54), (370, 985, 62), (555, 985, 62),
+                      (680, 960, 48)):
         c.poly(_hexagon(cx, cy, r), SHELL_DARK)
         c.poly(_hexagon(cx, cy, r - 12), SHELL_PLATE)
-    # tail poking out on the right
-    c.poly([(898, 848), (996, 892), (902, 922)], SKIN_DARK)
-    # neck and head, facing left: thick neck rising from the shell's shoulder
-    c.thick_line(215, 875, 130, 725, 64, SKIN)
-    c.ellipse(112, 702, 62, 48, SKIN)
-    c.disc(88, 694, 8, BIRD)
-    c.disc(85, 691, 3, SPRAY)
-    c.thick_line(70, 722, 128, 714, 6, SKIN_DARK)
-    # rear leg planted, front leg lifted mid-stride with a clear foot
-    c.thick_line(725, 950, 745, 1006, 72, SKIN)
-    c.ellipse(746, 1012, 56, 18, SKIN)
-    c.thick_line(310, 950, 228, 1008, 68, SKIN)
-    c.ellipse(218, 1012, 52, 20, SKIN)
-    c.disc(182, 1018, 10, SKIN)
-    c.disc(206, 1020, 10, SKIN)
+    # tail poking out on the right, bigger than before
+    c.poly([(905, 855), (1012, 900), (908, 935)], SKIN_DARK)
+    # neck and head, facing left: a thick neck rising from the shoulder,
+    # head with a snout so it reads as a turtle, not a blob
+    c.thick_line(230, 880, 135, 700, 78, SKIN)
+    c.ellipse(105, 678, 68, 52, SKIN)
+    c.ellipse(48, 690, 26, 20, SKIN)
+    c.disc(82, 668, 9, BIRD)
+    c.disc(79, 665, 3, SPRAY)
+    c.thick_line(52, 700, 108, 692, 6, SKIN_DARK)
+    # rear flipper planted, front flipper lifted mid-stroke with a foot
+    c.thick_line(740, 960, 762, 1012, 76, SKIN)
+    c.ellipse(764, 1018, 58, 18, SKIN)
+    c.thick_line(310, 950, 212, 1006, 70, SKIN)
+    c.ellipse(196, 1012, 55, 20, SKIN)
+    c.disc(158, 1018, 10, SKIN)
+    c.disc(182, 1020, 10, SKIN)
+    c.disc(206, 1016, 9, SKIN)
 
 
 def draw_city(c):
-    # mini skyline riding the shell's top curve, baseline ~y 745
-    buildings = [(280, 42, 55), (330, 36, 80), (374, 48, 62),
-                 (430, 40, 95), (478, 34, 70), (520, 46, 58),
-                 (574, 38, 85), (620, 30, 60)]
+    # a taller, busier skyline riding the shell's top curve, baseline ~745
+    buildings = [(258, 40, 58), (304, 34, 84), (344, 46, 66),
+                 (396, 38, 102), (440, 34, 74), (480, 44, 62),
+                 (530, 36, 92), (572, 30, 64), (608, 42, 78)]
     for x0, w, h in buildings:
         c.rect(x0, 745 - h, x0 + w, 762, CITY)
-        for row in range(745 - h + 8, 745 - 6, 12):
-            for col in range(x0 + 6, x0 + w - 4, 10):
-                if (row + col) % 3 == 0:
+        for row in range(745 - h + 8, 745 - 6, 11):
+            for col in range(x0 + 6, x0 + w - 4, 9):
+                if (row + col) % 2 == 0:
                     c.rect(col, row, col + 4, row + 6, WINDOW)
+    # domed hall between the towers
+    c.rect(500, 700, 560, 762, CITY)
+    c.ellipse(530, 700, 30, 22, CITY)
+    c.disc(530, 676, 4, WINDOW)
     # central tower with spire and beacon
     c.rect(452, 600, 496, 762, CITY)
-    c.poly([(452, 600), (496, 600), (474, 560)], CITY)
-    c.disc(474, 556, 5, WINDOW)
-    # lighthouse with a beam toward the sun
-    c.rect(616, 648, 640, 762, CITY)
-    c.rect(616, 648, 640, 660, WINDOW)
-    c.poly([(640, 652), (772, 606), (772, 668)], BEAM)
+    c.poly([(452, 600), (496, 600), (474, 548)], CITY)
+    c.disc(474, 544, 6, WINDOW)
+    # lighthouse with a wide beam toward the sun
+    c.rect(640, 630, 664, 762, CITY)
+    c.rect(640, 630, 664, 644, WINDOW)
+    c.poly([(664, 634), (790, 600), (790, 680)], BEAM)
 
 
 def draw_birds(c):
-    for x, y, s in ((300, 150, 16), (360, 120, 12), (180, 220, 13),
-                    (700, 200, 15), (760, 160, 11), (520, 90, 12)):
+    # a wide arc sweeping up-left, and a small flock near the sun
+    for x, y, s in ((150, 185, 17), (205, 150, 14), (265, 122, 15),
+                    (325, 102, 12), (385, 88, 13), (445, 82, 11),
+                    (505, 82, 12)):
+        c.thick_line(x - s, y, x, y - 6, 4, BIRD)
+        c.thick_line(x, y - 6, x + s, y, 4, BIRD)
+    for x, y, s in ((668, 225, 13), (712, 195, 11), (752, 168, 12),
+                    (788, 148, 10)):
         c.thick_line(x - s, y, x, y - 6, 4, BIRD)
         c.thick_line(x, y - 6, x + s, y, 4, BIRD)
 
 
 def draw_spray(c):
-    # droplets and foam kicked up by the lifted front foot
-    for x, y, r in ((168, 1000, 8), (142, 984, 5), (196, 972, 6),
-                    (118, 1012, 7), (232, 988, 4), (152, 1020, 6),
-                    (96, 1002, 5), (252, 1006, 5)):
+    # a big burst kicked up by the lifted front flipper
+    for x, y, r in ((168, 1000, 9), (140, 982, 6), (198, 970, 7),
+                    (116, 1012, 8), (234, 986, 5), (150, 1020, 7),
+                    (94, 1000, 6), (254, 1004, 6), (210, 950, 5),
+                    (120, 962, 5), (262, 962, 4), (180, 940, 4)):
         c.disc(x, y, r, SPRAY)
 
 
@@ -266,6 +303,7 @@ def build_image():
     draw_clouds(c)
     draw_sea(c)
     draw_turtle(c)
+    draw_wake(c)
     draw_city(c)
     draw_birds(c)
     draw_spray(c)
