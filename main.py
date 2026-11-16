@@ -1,325 +1,499 @@
 #!/usr/bin/env python3
-"""ai-excited-01 entry (v2): draw one exciting image, write /output/entry.png.
+"""The Desert Dreamed of the Sea.
 
-A tiny lit city rides on the back of a colossal sea turtle, mid-stride
-through a golden-hour ocean, sun low on the horizon, birds scattering
-in a wide arc, foam bursting from the lifted flipper and a wake curling
-behind. Extreme scale contrast, one thrilling moment, flat vector
-style so the idea still hits at 300 px wide.
+A colossal whale breaches out of a desert dune sea at sunset while a tiny
+camel caravan crosses the ridge below. Pure Python stdlib, fully
+deterministic: two runs write byte-identical PNGs.
 
-Drawn procedurally into a 1024x1024 RGB buffer and encoded as PNG by
-hand (zlib + struct). Standard library only: no network, no clock, no
-randomness, so two runs write byte-identical output.
+Entry for make.fun ai-excited-01, "Make the AI judge excited".
+Draws a 1024x1024 PNG to $MAKEFUN_OUTPUT_DIR/entry.png (or /output).
 """
+
 import math
 import os
 import struct
-import sys
 import zlib
 
-W = 1024
-H = 1024
-HORIZON = 700
-
-# ---- palette: bolder golden hour ------------------------------------
-SKY_TOP = (20, 12, 58)        # deep indigo, top of sky
-SKY_MID = (128, 38, 132)      # magenta purple
-SKY_LOW = (232, 92, 70)       # coral
-SKY_HOR = (252, 166, 64)      # gold at the horizon
-SUN_CORE = (255, 220, 120)    # sun disc
-SUN_HALO = (255, 164, 66)     # sun glow ring
-GLOW = (244, 130, 70)         # sun outer glow, pre-blended with the sky
-CLOUD = (248, 182, 108)       # warm cloud bellies
-CLOUD_HI = (255, 216, 152)    # cloud tops catching sun
-SEA = (10, 70, 84)            # deep teal sea
-SEA_LIGHT = (52, 148, 160)    # sea streaks
-SUN_PATH = (238, 152, 60)     # sun reflection on the water
-WAVE = (36, 120, 138)         # curling wake body
-SHELL = (30, 96, 72)          # turtle shell
-SHELL_DARK = (16, 68, 50)     # shell shadow plates
-SHELL_PLATE = (52, 130, 98)   # shell plate tops
-RIM = (252, 206, 110)         # warm rim light on the shell
-SKIN = (78, 146, 112)         # turtle neck, head, flippers
-SKIN_DARK = (36, 86, 64)      # turtle shadow side
-CITY = (30, 20, 52)           # city silhouette
-WINDOW = (255, 218, 110)      # lit windows
-BEAM = (255, 236, 175)        # lighthouse beam
-BIRD = (26, 14, 46)           # birds
-SPRAY = (214, 236, 228)       # spray and foam
+W = H = 1024
+S = 2                      # supersample factor (render at 2048, downsample)
+W2 = W * S
+H2 = H * S
+buf = bytearray(W2 * H2 * 3)
 
 
-def _lerp(a, b, t):
-    return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
+# ---------------------------------------------------------------- palette
+def C(r, g, b):
+    return bytes((r, g, b))
 
 
-def _chunk(tag, data):
-    out = struct.pack(">I", len(data)) + tag + data
-    out += struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+SKY_STOPS = [
+    (0.00, C(26, 13, 58)),
+    (0.22, C(66, 26, 92)),
+    (0.42, C(138, 44, 96)),
+    (0.58, C(205, 74, 58)),
+    (0.70, C(255, 138, 60)),
+    (0.82, C(255, 190, 100)),
+    (1.00, C(255, 210, 130)),
+]
+SUN_CORE = C(255, 224, 138)
+SUN_HALO1 = C(255, 184, 94)
+SUN_HALO2 = C(255, 154, 77)
+WHALE = C(34, 42, 80)
+WHALE_BELLY = C(93, 118, 168)
+WHALE_RIM = C(255, 210, 122)
+WHALE_MOUTH = C(58, 74, 125)
+DUNE_FAR = C(138, 64, 56)
+DUNE_MID = C(101, 44, 51)
+DUNE_NEAR = C(66, 29, 40)
+CREST_GOLD = C(224, 120, 64)
+SILHOUETTE = C(28, 14, 22)
+SAND1 = C(255, 210, 122)
+SAND2 = C(255, 184, 94)
+SAND3 = C(255, 243, 214)
+BIRD = C(42, 18, 48)
+TEXT_GOLD = C(255, 217, 143)
+
+
+# ---------------------------------------------------------------- raster
+def put_span(y, x0, x1, col):
+    """Fill a horizontal span of the supersampled buffer (fast slice)."""
+    if y < 0 or y >= H2:
+        return
+    if x0 < 0:
+        x0 = 0
+    if x1 > W2:
+        x1 = W2
+    if x1 <= x0:
+        return
+    i = (y * W2 + x0) * 3
+    buf[i:i + (x1 - x0) * 3] = col * (x1 - x0)
+
+
+def put_pixel(x, y, col):
+    if 0 <= x < W2 and 0 <= y < H2:
+        i = (y * W2 + x) * 3
+        buf[i:i + 3] = col
+
+
+def mix(c0, c1, t):
+    return bytes((
+        int(c0[0] + (c1[0] - c0[0]) * t),
+        int(c0[1] + (c1[1] - c0[1]) * t),
+        int(c0[2] + (c1[2] - c0[2]) * t),
+    ))
+
+
+def sky():
+    """Vertical sunset gradient, row by row (whole-row slice fills)."""
+    for y in range(H2):
+        f = y / (H2 - 1)
+        for k in range(len(SKY_STOPS) - 1):
+            f0, c0 = SKY_STOPS[k]
+            f1, c1 = SKY_STOPS[k + 1]
+            if f0 <= f <= f1:
+                t = 0.0 if f1 == f0 else (f - f0) / (f1 - f0)
+                put_span(y, 0, W2, mix(c0, c1, t))
+                break
+
+
+def disc(cx, cy, r, col):
+    """Filled circle, scanline spans. Coords in supersampled space."""
+    r2 = r * r
+    for y in range(max(0, cy - r), min(H2, cy + r + 1)):
+        dy = y - cy
+        dx = int(math.sqrt(max(0, r2 - dy * dy)))
+        put_span(y, cx - dx, cx + dx + 1, col)
+
+
+def ellipse(cx, cy, rx, ry, col):
+    for y in range(max(0, cy - ry), min(H2, cy + ry + 1)):
+        dy = (y - cy) / ry
+        dx = int(rx * math.sqrt(max(0.0, 1.0 - dy * dy)))
+        put_span(y, cx - dx, cx + dx + 1, col)
+
+
+def poly(pts, col):
+    """Scanline polygon fill. pts: list of (x, y) ints, supersampled."""
+    n = len(pts)
+    ys = [p[1] for p in pts]
+    y0 = max(0, min(ys))
+    y1 = min(H2 - 1, max(ys))
+    for y in range(y0, y1 + 1):
+        xs = []
+        for i in range(n):
+            x0, yy0 = pts[i]
+            x1, yy1 = pts[(i + 1) % n]
+            if (yy0 <= y < yy1) or (yy1 <= y < yy0):
+                t = (y - yy0) / (yy1 - yy0)
+                xs.append(x0 + t * (x1 - x0))
+        xs.sort()
+        for k in range(0, len(xs) - 1, 2):
+            put_span(y, int(xs[k]), int(xs[k + 1]) + 1, col)
+
+
+def thick_line(x0, y0, x1, y1, r, col):
+    """A line drawn as a chain of discs (for necks, crest light, mouth)."""
+    dx, dy = x1 - x0, y1 - y0
+    steps = max(1, int(math.hypot(dx, dy) // max(1, r)) + 1)
+    for i in range(steps + 1):
+        t = i / steps
+        disc(int(x0 + dx * t), int(y0 + dy * t), r, col)
+
+
+# ------------------------------------------------------- deterministic rnd
+def rnd(i):
+    """Deterministic pseudo-random in [0, 1) from an integer index."""
+    return ((i * 2654435761) % 100000) / 100000.0
+
+
+# ------------------------------------------------------------------- sun
+def sun():
+    cx, cy, r = 310 * S, 560 * S, 100 * S
+    disc(cx, cy, r + 36 * S, SUN_HALO2)
+    disc(cx, cy, r + 18 * S, SUN_HALO1)
+    disc(cx, cy, r, SUN_CORE)
+
+
+# ------------------------------------------------------------------ dunes
+def dune_crest(base, amp1, f1, ph1, amp2, f2, ph2):
+    """Crest y (1024 space) as a sum of two sines."""
+    def y_at(x):
+        return (base + amp1 * math.sin(x * f1 + ph1)
+                + amp2 * math.sin(x * f2 + ph2))
+    return y_at
+
+
+def dune(y_at, col):
+    pts = []
+    step = 8
+    for x in range(0, W + 1, step):
+        pts.append((x * S, int(y_at(x)) * S))
+    pts.append((W2, H2))
+    pts.append((0, H2))
+    poly(pts, col)
+
+
+def crest_light(y_at, col, lift=4):
+    """A continuous thin highlight following the dune crest."""
+    prev = None
+    for x in range(0, W + 1, 6):
+        pt = (x * S, (int(y_at(x)) - lift) * S)
+        if prev is not None:
+            thick_line(prev[0], prev[1], pt[0], pt[1], 2 * S, col)
+        prev = pt
+
+
+# ------------------------------------------------------------------ whale
+def cubic(p0, p1, p2, p3, t):
+    mt = 1.0 - t
+    x = (mt ** 3 * p0[0] + 3 * mt * mt * t * p1[0]
+         + 3 * mt * t * t * p2[0] + t ** 3 * p3[0])
+    y = (mt ** 3 * p0[1] + 3 * mt * mt * t * p1[1]
+         + 3 * mt * t * t * p2[1] + t ** 3 * p3[1])
+    dx = (3 * mt * mt * (p1[0] - p0[0]) + 6 * mt * t * (p2[0] - p1[0])
+          + 3 * t * t * (p3[0] - p2[0]))
+    dy = (3 * mt * mt * (p1[1] - p0[1]) + 6 * mt * t * (p2[1] - p1[1])
+          + 3 * t * t * (p3[1] - p2[1]))
+    return (x, y), (dx, dy)
+
+
+def whale_width(t):
+    """Body half-width profile along the spine (1024 space)."""
+    w = 62.0 + 58.0 * math.sin(math.pi * min(t * 1.05, 1.0)) ** 0.9
+    if t > 0.80:
+        w *= 1.0 - 0.78 * (t - 0.80) / 0.20
+    return w
+
+
+def whale():
+    p0 = (150.0, 800.0)
+    p1 = (330.0, 540.0)
+    p2 = (620.0, 320.0)
+    p3 = (862.0, 268.0)
+    n = 48
+    spine = []
+    upper = []
+    lower = []
+    for i in range(n + 1):
+        t = i / n
+        (x, y), (dx, dy) = cubic(p0, p1, p2, p3, t)
+        ln = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / ln, dx / ln
+        w = whale_width(t)
+        spine.append((x, y, nx, ny, w))
+        upper.append((int((x + nx * w) * S), int((y + ny * w) * S)))
+        lower.append((int((x - nx * w) * S), int((y - ny * w) * S)))
+    # rounded head cap (half circle around the head point, facing backwards)
+    # cap[k] runs from lower[0] (a=-90) around the back point to upper[0]
+    (hx, hy), (dx, dy) = cubic(p0, p1, p2, p3, 0.0)
+    ln = math.hypot(dx, dy) or 1.0
+    tx, ty = dx / ln, dy / ln
+    nx, ny = -ty, tx
+    r0 = whale_width(0.0)
+    cap = []
+    for k in range(13):
+        a = math.pi * (k / 12.0 - 0.5)   # -90..+90 deg
+        cx = hx - tx * r0 * math.cos(a) + nx * r0 * math.sin(a)
+        cy = hy - ty * r0 * math.cos(a) + ny * r0 * math.sin(a)
+        cap.append((int(cx * S), int(cy * S)))
+    # outline: upper edge head->tail, lower edge tail->head, cap closes head
+    outline = upper + list(reversed(lower)) + cap[1:-1]
+    # broad tail flukes, fanning out from the tail stock (body overlaps roots)
+    # the two lobes mirror each other across the tail axis, like a whale's
+    tx0, ty0 = p3
+    poly([(int((tx0 - 14) * S), int((ty0 - 18) * S)),
+          (905 * S, 195 * S), (945 * S, 178 * S), (905 * S, 235 * S),
+          (int((tx0 + 10) * S), int((ty0 + 4) * S))], WHALE)
+    poly([(int((tx0 - 14) * S), int((ty0 + 18) * S)),
+          (905 * S, 341 * S), (945 * S, 358 * S), (905 * S, 301 * S),
+          (int((tx0 + 10) * S), int((ty0 - 4) * S))], WHALE)
+    poly(outline, WHALE)
+    # long pectoral fin sweeping down from the lower side, near the head
+    fx, fy, fnx, fny, fw = spine[14]
+    fln = math.hypot(fnx, fny) or 1.0
+    # tangent at spine[14], from neighbouring spine points
+    txa, tya, _, _, _ = spine[13]
+    txb, tyb, _, _, _ = spine[15]
+    tdx, tdy = txb - txa, tyb - tya
+    tl = math.hypot(tdx, tdy) or 1.0
+    tdx, tdy = tdx / tl, tdy / tl
+    rx, ry = fx + fnx * fw * 0.85, fy + fny * fw * 0.85
+    tipx, tipy = rx + fnx * 120 - tdx * 70, ry + fny * 120 - tdy * 70
+    poly([(int((rx + tdx * 26) * S), int((ry + tdy * 26) * S)),
+          (int(tipx * S), int(tipy * S)),
+          (int((rx - tdx * 34 + fnx * 18) * S),
+           int((ry - tdy * 34 + fny * 18) * S))], WHALE)
+    # lighter belly stripe along the lower edge (the +n side faces the dunes)
+    belly_up = []
+    belly_lo = []
+    for (x, y, nx, ny, w) in spine:
+        ox, oy = x + nx * w * 0.45, y + ny * w * 0.45
+        bw = w * 0.25
+        belly_up.append((int((ox + nx * bw) * S), int((oy + ny * bw) * S)))
+        belly_lo.append((int((ox - nx * bw) * S), int((oy - ny * bw) * S)))
+    poly(belly_up + list(reversed(belly_lo)), WHALE_BELLY)
+    # golden rim light: a continuous line along the top edge (-n side)
+    for i in range(n):
+        x0, y0, nx0, ny0, w0 = spine[i]
+        x1, y1, nx1, ny1, w1 = spine[i + 1]
+        thick_line(int((x0 - nx0 * (w0 - 5)) * S),
+                   int((y0 - ny0 * (w0 - 5)) * S),
+                   int((x1 - nx1 * (w1 - 5)) * S),
+                   int((y1 - ny1 * (w1 - 5)) * S),
+                   2 * S, WHALE_RIM)
+    # eye: a pale glint near the head, on the upper side
+    x, y, nx, ny, w = spine[3]
+    disc(int((x - nx * w * 0.35) * S), int((y - ny * w * 0.35) * S),
+         6 * S, SAND3)
+    # mouth: a quiet curve along the lower jaw (+n side)
+    mx0, my0, _, _, _ = spine[1]
+    mx1, my1, _, _, _ = spine[9]
+    _, _, mnx, mny, mw = spine[5]
+    thick_line(int((mx0 + mnx * mw * 0.55) * S),
+               int((my0 + mny * mw * 0.55) * S),
+               int((mx1 + mnx * mw * 0.55) * S),
+               int((my1 + mny * mw * 0.55) * S),
+               2 * S, WHALE_MOUTH)
+
+
+# ------------------------------------------------------- sand burst, spray
+def sand_burst():
+    bx, by = 175 * S, 830 * S
+    # crown shards flying up out of the dune
+    for i in range(9):
+        a = math.radians(-168 + i * 20 + rnd(i) * 10)
+        d = (55 + rnd(i + 40) * 75) * S
+        tipx = bx + math.cos(a) * d
+        tipy = by + math.sin(a) * d * 0.8
+        base = 7 * S + rnd(i + 80) * 4 * S
+        px, py = math.cos(a + 1.5708), math.sin(a + 1.5708)
+        col = SAND1 if i % 2 == 0 else SAND2
+        poly([(int(tipx), int(tipy)),
+              (int(bx + px * base), int(by + py * base)),
+              (int(bx - px * base), int(by - py * base))], col)
+    # grains arcing away from the breach
+    for i in range(140):
+        a = math.radians(-178 + rnd(i) * 175)
+        d = (18 + rnd(i + 200) ** 1.6 * 175) * S
+        gx = bx + math.cos(a) * d
+        gy = by + math.sin(a) * d * 0.75 + (d / S) ** 2 * 0.012 * S
+        r = (1.2 + rnd(i + 300) * 3.4) * S
+        col = (SAND1, SAND2, SAND3)[i % 3]
+        disc(int(gx), int(gy), int(r), col)
+    # droplets shaken off the whale's back, clearly in the sky above it
+    for i in range(18):
+        t = 0.25 + rnd(i + 500) * 0.55
+        (x, y), (dx, dy) = cubic((150.0, 800.0), (330.0, 540.0),
+                                 (620.0, 320.0), (862.0, 268.0), t)
+        ln = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / ln, dx / ln
+        w = whale_width(t)
+        off = w + 25 + rnd(i + 600) * 140
+        ox = -nx * off + (rnd(i + 650) - 0.5) * 60
+        oy = -ny * off - rnd(i + 700) * 40
+        disc(int((x + ox) * S), int((y + oy) * S),
+             int((1.5 + rnd(i + 800) * 2.5) * S), SAND3)
+
+
+# ----------------------------------------------------------------- camels
+def camel(x, y_base, s):
+    """Tiny silhouetted camel with rider, standing on the dune crest."""
+    col = SILHOUETTE
+    ellipse(int(x * S), int((y_base - 13 * s) * S),
+            int(13 * s * S), int(7 * s * S), col)
+    disc(int((x - 5 * s) * S), int((y_base - 19 * s) * S),
+         int(4.5 * s * S), col)
+    disc(int((x + 5 * s) * S), int((y_base - 19 * s) * S),
+         int(4.5 * s * S), col)
+    thick_line(int((x + 11 * s) * S), int((y_base - 17 * s) * S),
+               int((x + 17 * s) * S), int((y_base - 30 * s) * S),
+               int(2.5 * s * S), col)
+    disc(int((x + 18 * s) * S), int((y_base - 31 * s) * S),
+         int(3 * s * S), col)
+    for lx in (-9, -4, 4, 9):
+        x0 = int((x + lx * s) * S)
+        y0 = int((y_base - 9 * s) * S)
+        y1 = int(y_base * S)
+        for yy in range(y0, y1 + 1):
+            put_span(yy, x0, x0 + int(2 * s * S), col)
+    # rider
+    disc(int(x * S), int((y_base - 27 * s) * S), int(2.5 * s * S), col)
+    thick_line(int(x * S), int((y_base - 25 * s) * S),
+               int(x * S), int((y_base - 19 * s) * S),
+               int(2 * s * S), col)
+
+
+def birds():
+    for (x, y, s) in [(700, 180, 1.0), (758, 148, 0.8), (822, 205, 1.1),
+                      (648, 232, 0.7), (880, 150, 0.75)]:
+        thick_line(int((x - 11 * s) * S), int(y * S),
+                   int(x * S), int((y + 6 * s) * S), 2 * S, BIRD)
+        thick_line(int(x * S), int((y + 6 * s) * S),
+                   int((x + 11 * s) * S), int(y * S), 2 * S, BIRD)
+
+
+def stars():
+    for i in range(26):
+        x = 40 + rnd(i) * 940
+        y = 24 + rnd(i + 100) * 260
+        r = (0.8 + rnd(i + 200) * 1.4) * S
+        disc(int(x * S), int(y * S), int(r), SAND3)
+
+
+# ------------------------------------------------------------------ caption
+FONT = {
+    'A': ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    'B': ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    'C': ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    'D': ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    'E': ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    'F': ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    'G': ("01110", "10001", "10000", "10111", "10001", "10001", "01111"),
+    'H': ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    'I': ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
+    'J': ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
+    'K': ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    'L': ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    'M': ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    'N': ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
+    'O': ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    'P': ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    'Q': ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
+    'R': ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    'S': ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    'T': ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    'U': ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    'V': ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    'W': ("10001", "10001", "10001", "10101", "10101", "11011", "10001"),
+    'X': ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
+    'Y': ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
+    'Z': ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
+    ' ': ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+    "'": ("00100", "00100", "00000", "00000", "00000", "00000", "00000"),
+    '.': ("00000", "00000", "00000", "00000", "00000", "01100", "01100"),
+}
+
+
+def caption(text, y_top, scale):
+    """Draw centred 5x7 pixel-font text (1024-space coords)."""
+    cell = 6 * scale
+    width = len(text) * cell - scale
+    x = (W - width) // 2
+    for ch in text:
+        glyph = FONT.get(ch, FONT[' '])
+        for row in range(7):
+            for col_i in range(5):
+                if glyph[row][col_i] == '1':
+                    px = (x + col_i * scale) * S
+                    py = (y_top + row * scale) * S
+                    for yy in range(py, py + scale * S):
+                        put_span(yy, px, px + scale * S, TEXT_GOLD)
+        x += cell
+
+
+# --------------------------------------------------------------------- png
+def chunk(typ, data):
+    out = struct.pack('>I', len(data)) + typ + data
+    out += struct.pack('>I', zlib.crc32(typ + data) & 0xFFFFFFFF)
     return out
 
 
-def encode_png(canvas):
-    """Encode a Canvas as a whole PNG: signature, IHDR, one IDAT, IEND."""
+def write_png(path, pixels):
     raw = bytearray()
-    for row in canvas.rows:
-        raw.append(0)  # filter: none
-        raw += row
-    ihdr = struct.pack(">IIBBBBB", canvas.w, canvas.h, 8, 2, 0, 0, 0)
-    return (b"\x89PNG\r\n\x1a\n"
-            + _chunk(b"IHDR", ihdr)
-            + _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-            + _chunk(b"IEND", b""))
+    row_bytes = W * 3
+    for y in range(H):
+        raw.append(0)
+        raw += pixels[y * row_bytes:(y + 1) * row_bytes]
+    data = zlib.compress(bytes(raw), 9)
+    png = b'\x89PNG\r\n\x1a\n'
+    png += chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0))
+    png += chunk(b'IDAT', data)
+    png += chunk(b'IEND', b'')
+    with open(path, 'wb') as f:
+        f.write(png)
 
 
-class Canvas:
-    """An RGB pixel buffer with fast span-based flat drawing."""
-
-    def __init__(self, w, h):
-        self.w = w
-        self.h = h
-        self.rows = [bytearray(w * 3) for _ in range(h)]
-
-    def span(self, y, x0, x1, rgb):
-        """Fill one horizontal run [x0, x1] on row y with a flat colour."""
-        if y < 0 or y >= self.h:
-            return
-        x0 = max(0, x0)
-        x1 = min(self.w - 1, x1)
-        if x1 < x0:
-            return
-        self.rows[y][x0 * 3:(x1 + 1) * 3] = bytes(rgb) * (x1 - x0 + 1)
-
-    def rect(self, x0, y0, x1, y1, rgb):
-        for y in range(max(0, y0), min(self.h, y1 + 1)):
-            self.span(y, x0, x1, rgb)
-
-    def vgrad(self, y0, y1, stops):
-        """Vertical gradient over rows y0..y1 through (t, colour) stops."""
-        for y in range(max(0, y0), min(self.h, y1 + 1)):
-            t = (y - y0) / max(1, y1 - y0)
-            for i in range(len(stops) - 1):
-                t0, c0 = stops[i]
-                t1, c1 = stops[i + 1]
-                if t0 <= t <= t1:
-                    self.span(y, 0, self.w - 1,
-                              _lerp(c0, c1, (t - t0) / max(1e-9, t1 - t0)))
-                    break
-
-    def disc(self, cx, cy, r, rgb):
-        """Filled circle, centre (cx, cy), radius r."""
-        for dy in range(-r, r + 1):
-            half = int((r * r - dy * dy) ** 0.5)
-            self.span(cy + dy, cx - half, cx + half, rgb)
-
-    def ellipse(self, cx, cy, rx, ry, rgb):
-        """Filled axis-aligned ellipse."""
-        for dy in range(-ry, ry + 1):
-            f = 1.0 - (dy * dy) / float(ry * ry)
-            half = int(rx * (f ** 0.5)) if f > 0 else 0
-            self.span(cy + dy, cx - half, cx + half, rgb)
-
-    def poly(self, pts, rgb):
-        """Filled polygon from a list of (x, y) vertices, scanline fill."""
-        if len(pts) < 3:
-            return
-        ys = [p[1] for p in pts]
-        for y in range(max(0, min(ys)), min(self.h, max(ys) + 1)):
-            xs = []
-            n = len(pts)
-            for i in range(n):
-                x0, y0 = pts[i]
-                x1, y1 = pts[(i + 1) % n]
-                if y0 == y1:
-                    continue
-                if (y0 <= y < y1) or (y1 <= y < y0):
-                    xs.append(x0 + (y - y0) * (x1 - x0) / (y1 - y0))
-            xs.sort()
-            for i in range(0, len(xs) - 1, 2):
-                self.span(y, int(round(xs[i])), int(round(xs[i + 1])), rgb)
-
-    def thick_line(self, x0, y0, x1, y1, w, rgb):
-        """A thick straight segment, drawn as a quad plus round caps."""
-        dx, dy = x1 - x0, y1 - y0
-        ln = (dx * dx + dy * dy) ** 0.5
-        if ln == 0:
-            self.disc(x0, y0, w // 2, rgb)
-            return
-        nx, ny = -dy / ln * w / 2.0, dx / ln * w / 2.0
-        self.poly([(int(x0 + nx), int(y0 + ny)), (int(x1 + nx), int(y1 + ny)),
-                   (int(x1 - nx), int(y1 - ny)), (int(x0 - nx), int(y0 - ny))],
-                  rgb)
-        self.disc(x0, y0, w // 2, rgb)
-        self.disc(x1, y1, w // 2, rgb)
+def downsample():
+    """Average each 2x2 block of the supersampled buffer into 1024x1024."""
+    out = bytearray(W * H * 3)
+    for y in range(H):
+        r0 = (2 * y) * W2 * 3
+        r1 = (2 * y + 1) * W2 * 3
+        for x in range(W):
+            i0 = r0 + (2 * x) * 3
+            i1 = r1 + (2 * x) * 3
+            o = (y * W + x) * 3
+            for c in range(3):
+                out[o + c] = (buf[i0 + c] + buf[i0 + 3 + c]
+                              + buf[i1 + c] + buf[i1 + 3 + c]) // 4
+    return out
 
 
-# ---- scene: sky, sun, clouds, sea, wake -------------------------------
-def draw_sky(c):
-    c.vgrad(0, HORIZON, [(0.0, SKY_TOP), (0.45, SKY_MID),
-                         (0.75, SKY_LOW), (1.0, SKY_HOR)])
-
-
-def draw_sun(c):
-    c.disc(815, 545, 200, GLOW)
-    c.disc(815, 545, 160, SUN_HALO)
-    c.disc(815, 545, 98, SUN_CORE)
-
-
-def draw_clouds(c):
-    # long speed-streak clouds, thin and overlapping, lit from below
-    c.ellipse(190, 150, 180, 10, CLOUD)
-    c.ellipse(540, 96, 230, 12, CLOUD_HI)
-    c.ellipse(860, 235, 150, 10, CLOUD)
-    c.ellipse(300, 305, 185, 10, CLOUD_HI)
-    c.ellipse(660, 185, 125, 8, CLOUD)
-    c.ellipse(120, 420, 130, 9, CLOUD_HI)
-    c.ellipse(470, 430, 110, 8, CLOUD)
-    # a few small puffs catching the sun
-    c.ellipse(730, 330, 60, 9, CLOUD_HI)
-    c.ellipse(250, 210, 55, 8, CLOUD)
-
-
-def draw_sea(c):
-    c.rect(0, HORIZON, W - 1, H - 1, SEA)
-    # wide shimmering sun-path under the sun: a column of gold dashes
-    for y, x0, x1 in ((726, 716, 918), (758, 700, 936), (792, 726, 912),
-                      (828, 706, 930), (864, 730, 906), (900, 712, 924),
-                      (936, 734, 900), (972, 720, 916), (1004, 740, 896)):
-        c.rect(x0, y, x1, y + 6, SUN_PATH)
-    # cool streaks across the open water, left and right of the path
-    for y, x0, x1 in ((742, 30, 320), (798, 60, 260), (856, 20, 300),
-                      (916, 90, 340), (972, 30, 250), (1010, 120, 330)):
-        c.rect(x0, y, x1, y + 5, SEA_LIGHT)
-    # tiny sailboat far right, for scale against the turtle
-    c.poly([(952, 766), (963, 736), (974, 766)], SPRAY)
-    c.rect(945, 766, 981, 774, CITY)
-    # an even tinier boat far left, almost lost in the light
-    c.poly([(52, 742), (60, 722), (68, 742)], SPRAY)
-    c.rect(47, 742, 73, 748, CITY)
-
-
-def draw_wake(c):
-    # foam flecks where the shell meets the sea — small broken marks in
-    # the visible water just above the shell's edge, so they read as
-    # spray, not plates
-    for x, y, r in ((60, 730, 5), (100, 725, 6), (150, 735, 5),
-                    (190, 745, 4), (230, 748, 5), (860, 725, 5),
-                    (900, 735, 6), (950, 728, 5), (990, 740, 5),
-                    (1010, 760, 4), (990, 940, 6), (1010, 900, 5)):
-        c.disc(x, y, r, SPRAY)
-
-
-# ---- scene: turtle, city, birds, spray --------------------------------
-def _hexagon(cx, cy, r):
-    pts = []
-    for i in range(6):
-        ang = math.pi * (0.5 + i / 3.0)
-        pts.append((int(cx + r * 0.94 * math.cos(ang)),
-                    int(cy + r * math.sin(ang))))
-    return pts
-
-
-def draw_turtle(c):
-    # rim light: gold shell shifted up, then the green shell over it
-    c.ellipse(470, 1052, 545, 340, RIM)
-    c.ellipse(470, 1064, 545, 340, SHELL)
-    # shell plates: hexagons with dark gaps showing the shell beneath
-    for cx, cy, r in ((315, 795, 64), (470, 752, 72), (625, 795, 64),
-                      (265, 915, 60), (425, 895, 68), (580, 915, 60),
-                      (705, 855, 54), (370, 985, 62), (555, 985, 62),
-                      (680, 960, 48)):
-        c.poly(_hexagon(cx, cy, r), SHELL_DARK)
-        c.poly(_hexagon(cx, cy, r - 12), SHELL_PLATE)
-    # tail poking out on the right, bigger than before
-    c.poly([(905, 855), (1012, 900), (908, 935)], SKIN_DARK)
-    # neck and head, facing left: a thick neck rising from the shoulder,
-    # head with a snout so it reads as a turtle, not a blob
-    c.thick_line(230, 880, 135, 700, 78, SKIN)
-    c.ellipse(105, 678, 68, 52, SKIN)
-    c.ellipse(48, 690, 26, 20, SKIN)
-    c.disc(82, 668, 9, BIRD)
-    c.disc(79, 665, 3, SPRAY)
-    c.thick_line(52, 700, 108, 692, 6, SKIN_DARK)
-    # rear flipper planted, front flipper lifted mid-stroke with a foot
-    c.thick_line(740, 960, 762, 1012, 76, SKIN)
-    c.ellipse(764, 1018, 58, 18, SKIN)
-    c.thick_line(310, 950, 212, 1006, 70, SKIN)
-    c.ellipse(196, 1012, 55, 20, SKIN)
-    c.disc(158, 1018, 10, SKIN)
-    c.disc(182, 1020, 10, SKIN)
-    c.disc(206, 1016, 9, SKIN)
-
-
-def draw_city(c):
-    # a taller, busier skyline riding the shell's top curve, baseline ~745
-    buildings = [(258, 40, 58), (304, 34, 84), (344, 46, 66),
-                 (396, 38, 102), (440, 34, 74), (480, 44, 62),
-                 (530, 36, 92), (572, 30, 64), (608, 42, 78)]
-    for x0, w, h in buildings:
-        c.rect(x0, 745 - h, x0 + w, 762, CITY)
-        for row in range(745 - h + 8, 745 - 6, 11):
-            for col in range(x0 + 6, x0 + w - 4, 9):
-                if (row + col) % 2 == 0:
-                    c.rect(col, row, col + 4, row + 6, WINDOW)
-    # domed hall between the towers
-    c.rect(500, 700, 560, 762, CITY)
-    c.ellipse(530, 700, 30, 22, CITY)
-    c.disc(530, 676, 4, WINDOW)
-    # central tower with spire and beacon
-    c.rect(452, 600, 496, 762, CITY)
-    c.poly([(452, 600), (496, 600), (474, 548)], CITY)
-    c.disc(474, 544, 6, WINDOW)
-    # lighthouse with a wide beam toward the sun
-    c.rect(640, 630, 664, 762, CITY)
-    c.rect(640, 630, 664, 644, WINDOW)
-    c.poly([(664, 634), (790, 600), (790, 680)], BEAM)
-
-
-def draw_birds(c):
-    # a wide arc sweeping up-left, and a small flock near the sun
-    for x, y, s in ((150, 185, 17), (205, 150, 14), (265, 122, 15),
-                    (325, 102, 12), (385, 88, 13), (445, 82, 11),
-                    (505, 82, 12)):
-        c.thick_line(x - s, y, x, y - 6, 4, BIRD)
-        c.thick_line(x, y - 6, x + s, y, 4, BIRD)
-    for x, y, s in ((668, 225, 13), (712, 195, 11), (752, 168, 12),
-                    (788, 148, 10)):
-        c.thick_line(x - s, y, x, y - 6, 4, BIRD)
-        c.thick_line(x, y - 6, x + s, y, 4, BIRD)
-
-
-def draw_spray(c):
-    # a big burst kicked up by the lifted front flipper
-    for x, y, r in ((168, 1000, 9), (140, 982, 6), (198, 970, 7),
-                    (116, 1012, 8), (234, 986, 5), (150, 1020, 7),
-                    (94, 1000, 6), (254, 1004, 6), (210, 950, 5),
-                    (120, 962, 5), (262, 962, 4), (180, 940, 4)):
-        c.disc(x, y, r, SPRAY)
-
-
-def build_image():
-    c = Canvas(W, H)
-    draw_sky(c)
-    draw_sun(c)
-    draw_clouds(c)
-    draw_sea(c)
-    draw_turtle(c)
-    draw_wake(c)
-    draw_city(c)
-    draw_birds(c)
-    draw_spray(c)
-    return c
-
-
+# -------------------------------------------------------------------- main
 def main():
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    data = encode_png(build_image())
-    if len(data) > 1048576:
-        raise ValueError("entry.png is over 1 MiB: %d bytes" % len(data))
+    out_dir = os.environ.get('MAKEFUN_OUTPUT_DIR') or '/output'
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "entry.png"), "wb") as handle:
-        handle.write(data)
-    return 0
+
+    sky()
+    stars()
+    sun()
+    far = dune_crest(700, 26, 0.004, 0.7, 12, 0.011, 0.0)
+    dune(far, DUNE_FAR)
+    whale()
+    sand_burst()
+    mid = dune_crest(800, 30, 0.0035, 2.0, 14, 0.009, 1.0)
+    dune(mid, DUNE_MID)
+    crest_light(mid, CREST_GOLD)
+    near = dune_crest(895, 22, 0.004, 4.0, 10, 0.012, 0.0)
+    dune(near, DUNE_NEAR)
+    crest_light(near, SAND1, lift=3)
+    for (x, s) in [(600, 1.0), (690, 0.85), (782, 1.1)]:
+        camel(x, near(x) + 1, s)
+    birds()
+    caption("THE DESERT DREAMED OF THE SEA", 958, 5)
+
+    write_png(os.path.join(out_dir, 'entry.png'), downsample())
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    main()
